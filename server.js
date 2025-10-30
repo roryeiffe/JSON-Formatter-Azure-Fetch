@@ -11,12 +11,19 @@ const PAT = process.env.AZURE_PAT;
 
 console.log(PAT);
 
+const customEncoder = (str) => {
+  // replace instances of & with %26
+  return str.replace(/&/g, '%26');
+};
+
 app.post('/fetch-azure-file', async (req, res) => {
 
   try {
 
 
+
     const url = req.body.url;
+
 
     // Basic validation
     if (!url.startsWith('https://dev.azure.com/')) {
@@ -29,13 +36,15 @@ app.post('/fetch-azure-file', async (req, res) => {
 
     const repo = repoSegment.replace('_git/', '');
     const filePath = parsed.searchParams.get('path');
+    // encode filepath to handle special characters
+    const encodedFilePath = encodeURIComponent(filePath);
 
     if (!filePath) {
       return res.status(400).send('File path not found in URL');
     }
 
     const markdownURL = `https://dev.azure.com/${org}/${project}/_apis/git/repositories/${repo}/items` +
-      `?path=${filePath}&includeContent=true&api-version=7.1-preview.1`;
+      `?path=${encodedFilePath}&includeContent=true&api-version=7.1-preview.1`;
     
 
     const response = await fetch(markdownURL, {
@@ -44,6 +53,7 @@ app.post('/fetch-azure-file', async (req, res) => {
         Accept: 'application/json'
       }
     });
+
 
     if (!response.ok) {
       return res.status(response.status).send('Failed to fetch file content');
@@ -54,6 +64,7 @@ app.post('/fetch-azure-file', async (req, res) => {
     const resourceMetaData = await parse_markdown(content, url);
     let imgs = [];
     let imgNames = new Set();
+
 
     for (let img of resourceMetaData.imgs) {
       // fetch image from url:
@@ -79,6 +90,7 @@ app.post('/fetch-azure-file', async (req, res) => {
     let gifts = [];
     let giftNames = new Set();
 
+
     for (let gift of resourceMetaData.gifts) {
         const giftResponse = await fetch(gift.url, {
           headers: {
@@ -87,6 +99,7 @@ app.post('/fetch-azure-file', async (req, res) => {
           }
         });
         if (!giftResponse.ok) {
+          console.log(gift);
           return res.status(giftResponse.status).send('Failed to fetch gift content');
         }
         const giftBuffer = await giftResponse.arrayBuffer();
@@ -133,7 +146,7 @@ const resource_util = async (content, markdownURL, regex) => {
     }
   const markdownDir = pathParam.substring(0, pathParam.lastIndexOf('/'));
 
-  // Search for all instances of image links in markdown format ![alt text](image_url)
+  // Search for all instances of the regex in the content
   
   const resources = [];
   let match;
@@ -147,12 +160,16 @@ const resource_util = async (content, markdownURL, regex) => {
 
     // Resolve relative path to absolute
     const resolvedPath = new URL(relativePath, `https://example.com${markdownDir}/`).pathname;
+    // encode resolvedPath to handle special characters
+    const encodedResolvedPath = customEncoder(resolvedPath);
 
     // Construct direct content URL
-    const rawUrl = `https://dev.azure.com/${organization}/${project}/_apis/git/repositories/${repo}/items?path=${resolvedPath}&versionType=branch&version=${version}`;
+    const rawUrl = `https://dev.azure.com/${organization}/${project}/_apis/git/repositories/${repo}/items?path=${encodedResolvedPath}&versionType=branch&version=${version}`;
 
     const resourceName = relativePath.split('/').pop();
-    resources.push({url: rawUrl, oldName: relativePath, name: resourceName});
+    // encode resourceName to handle special characters
+    const encodedResourceName = customEncoder(resourceName);
+    resources.push({url: rawUrl, oldName: relativePath, name: encodedResourceName});
   }
   return resources;
 }
