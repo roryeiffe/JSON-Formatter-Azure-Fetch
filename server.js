@@ -16,11 +16,97 @@ const customEncoder = (str) => {
   return str.replace(/&/g, '%26');
 };
 
+const getActivityIDsFromNavigation = async (navigationContent, url) => {
+  const fileNames = navigationContent['templates'];
+
+  const activityIDs = {};
+
+  for (const fileName of fileNames) {
+    let templateURL = url.replace(/navigation\.json.*/,'') + encodeURIComponent(fileName) + '.json&includeContent=true&api-version=7.1-preview.1';
+    // get last 3 letters:
+    const format = fileName.slice(-3).toUpperCase();
+
+    try {
+            // fetch the contents at the URL:
+            const response = await fetch(templateURL, {
+                headers: {
+                    Authorization: `Basic ${Buffer.from(":" + PAT).toString('base64')}`, Accept: 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                continue;
+            }
+
+            const data = await response.json();
+            const unit = JSON.parse(data.content);
+
+
+            for(const unitActivity of unit.unitActivities) {
+              activityIDs[unitActivity.activityName+format] = unitActivity.activityId;
+            }
+
+            for(const module of unit.modules) {
+              for(const moduleActivity of module.moduleActivities) {
+                activityIDs[moduleActivity.activityName+format] = moduleActivity.activityId;
+              }
+              for (const topic of module.topics) {
+                for (const topicActivity of topic.topicActivities) {
+                  activityIDs[topicActivity.activityName+format] = topicActivity.activityId;
+                }
+              } 
+            }
+
+        } catch (error) {
+            console.error(error);
+            continue;
+        }
+      }
+
+      return activityIDs;
+
+}
+
+app.post ('/fetch-activity-ids', async (req, res) => {
+
+  const unitName = req.body.unitName;
+
+  const potentialRepoNames = [`TTSP - ${unitName}`, `TTSP-${unitName}`, `TTSP- ${unitName}`, `TTSP -${unitName}`];
+
+    for (let repoName of potentialRepoNames) {
+      let encodedRepoName = encodeURIComponent(repoName);
+      let url = `https://dev.azure.com/Revature-Technology/Technology-Engineering/_apis/git/repositories/${encodedRepoName}/items` +
+      `?path=navigation.json&includeContent=true&api-version=7.1-preview.1`;
+      
+      
+        try {
+            // fetch the contents at the URL:
+            const response = await fetch(url, {
+                headers: {
+                    Authorization: `Basic ${Buffer.from(":" + PAT).toString('base64')}`,
+                    Accept: 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                continue;
+            }
+
+            const data = await response.json();
+            const activityIDs =await getActivityIDsFromNavigation(JSON.parse(data.content), url);
+            return res.send(activityIDs);
+        } catch (error) {
+            console.error(error);
+            continue;
+        }
+    }
+
+    res.status(404).send('Navigation file not found');
+});
+
 app.post('/fetch-azure-file', async (req, res) => {
 
   try {
-
-
 
     const url = req.body.url;
 
@@ -99,7 +185,6 @@ app.post('/fetch-azure-file', async (req, res) => {
           }
         });
         if (!giftResponse.ok) {
-          console.log(gift);
           return res.status(giftResponse.status).send('Failed to fetch gift content');
         }
         const giftBuffer = await giftResponse.arrayBuffer();
@@ -142,7 +227,7 @@ const resource_util = async (content, markdownURL, regex) => {
   try {
     version = url.searchParams.get('version').replace(/^GB/, ''); // remove GB prefix (branch)
     } catch (e) {
-      version = 'main';
+      version = null;
     }
   const markdownDir = pathParam.substring(0, pathParam.lastIndexOf('/'));
 
@@ -164,7 +249,7 @@ const resource_util = async (content, markdownURL, regex) => {
     const encodedResolvedPath = customEncoder(resolvedPath);
 
     // Construct direct content URL
-    const rawUrl = `https://dev.azure.com/${organization}/${project}/_apis/git/repositories/${repo}/items?path=${encodedResolvedPath}&versionType=branch&version=${version}`;
+    const rawUrl = `https://dev.azure.com/${organization}/${project}/_apis/git/repositories/${repo}/items?path=${encodedResolvedPath}` + (version ? `&versionType=branch&version=${version}` : '');
 
     const resourceName = relativePath.split('/').pop();
     // encode resourceName to handle special characters
